@@ -6,6 +6,8 @@
 
 **https://rsaoda.github.io/video-parser/**
 
+> 注意：在线版本依赖第三方API，可能不稳定。推荐使用本地运行版本。
+
 ## 支持平台
 
 | 平台 | 状态 |
@@ -27,28 +29,29 @@
 
 ## 使用方法
 
-1. 打开短视频APP（抖音/快手/B站等）
-2. 找到想要下载的视频，点击分享
-3. 复制分享链接
-4. 打开本网站 https://rsaoda.github.io/video-parser/
-5. 粘贴链接到输入框
-6. 点击"解析"按钮
-7. 等待解析完成，点击"下载无水印视频"
+### 方式一：在线使用（简单但可能不稳定）
 
-## 项目结构
+1. 打开 https://rsaoda.github.io/video-parser/
+2. 粘贴视频链接
+3. 点击解析
 
+### 方式二：本地运行（推荐，更稳定）
+
+```bash
+# 克隆项目
+git clone https://github.com/Rsaoda/video-parser.git
+cd video-parser
+
+# 安装Python依赖
+pip install flask flask-cors requests
+
+# 启动服务器
+python app.py
 ```
-video-parser/
-├── index.html          # 主页面（前端）
-├── server.js           # 后端服务器（本地运行用）
-├── package.json        # Node.js 依赖配置
-├── vercel.json         # Vercel 部署配置
-└── README.md           # 说明文档
-```
 
-## 本地运行
+访问 http://localhost:5000
 
-如需在本地运行后端服务：
+### 方式三：使用Node.js版本
 
 ```bash
 # 安装依赖
@@ -58,14 +61,34 @@ npm install
 npm start
 ```
 
-服务器将在 http://localhost:3000 启动
+访问 http://localhost:3000
+
+## 项目结构
+
+```
+video-parser/
+├── index.html          # 前端页面
+├── app.py              # Python后端（推荐）
+├── server.js           # Node.js后端
+├── worker.js           # Cloudflare Worker版本
+├── package.json        # Node.js依赖配置
+└── README.md           # 说明文档
+```
+
+## 部署到Cloudflare Workers（免费且稳定）
+
+1. 注册 [Cloudflare](https://cloudflare.com) 账号
+2. 进入 Workers 控制台
+3. 创建新的Worker
+4. 将 `worker.js` 内容粘贴进去
+5. 部署后获得类似 `https://video-parser.your-name.workers.dev` 的地址
+6. 修改 `index.html` 中的API地址为你的Worker地址
 
 ## 技术栈
 
 - **前端**: HTML5 + CSS3 + Vanilla JavaScript
-- **后端**: Node.js + Express（本地版本）
-- **部署**: GitHub Pages
-- **API**: 第三方视频解析接口
+- **后端**: Python Flask / Node.js Express / Cloudflare Workers
+- **部署**: GitHub Pages / 本地运行 / Cloudflare
 
 ## 注意事项
 
@@ -76,12 +99,8 @@ npm start
 
 ## 常见问题
 
-**Q: 为什么解析失败？**
-A: 可能原因：
-- 链接格式不正确
-- 视频已被删除或设为私密
-- 平台接口临时不可用
-- 网络连接问题
+**Q: 为什么在线版本解析失败？**
+A: 在线版本依赖第三方API，这些API可能不稳定或已失效。建议使用本地Python版本或部署Cloudflare Worker。
 
 **Q: 支持哪些链接格式？**
 A: 支持各平台的分享链接，包括短链接和完整链接。
@@ -90,6 +109,11 @@ A: 支持各平台的分享链接，包括短链接和完整链接。
 A: 视频会下载到浏览器默认的下载目录。
 
 ## 更新日志
+
+### v1.1.0 (2026-05-19)
+- 添加Python后端版本
+- 添加Cloudflare Worker版本
+- 优化前端多API切换逻辑
 
 ### v1.0.0 (2026-05-19)
 - 初始版本发布
