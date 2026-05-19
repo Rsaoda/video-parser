@@ -1,4 +1,261 @@
-<!DOCTYPE html>
+// Cloudflare Worker 短视频解析服务
+// 部署到 Cloudflare Workers 即可使用
+
+addEventListener('fetch', event => {
+  event.respondWith(handleRequest(event.request))
+})
+
+async function handleRequest(request) {
+  // CORS headers
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  }
+
+  // Handle OPTIONS request
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders })
+  }
+
+  const url = new URL(request.url)
+
+  // API endpoint
+  if (url.pathname === '/api/parse') {
+    const videoUrl = url.searchParams.get('url')
+    if (!videoUrl) {
+      return new Response(JSON.stringify({ error: '缺少url参数' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      })
+    }
+
+    try {
+      const result = await parseVideo(videoUrl)
+      return new Response(JSON.stringify(result), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      })
+    } catch (error) {
+      return new Response(JSON.stringify({ error: error.message }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      })
+    }
+  }
+
+  // Serve frontend
+  return new Response(HTML_CONTENT, {
+    headers: { 'Content-Type': 'text/html;charset=UTF-8' }
+  })
+}
+
+async function parseVideo(url) {
+  // 抖音解析
+  if (url.includes('douyin.com') || url.includes('iesdouyin.com')) {
+    return await parseDouyin(url)
+  }
+  // 快手解析
+  if (url.includes('kuaishou.com') || url.includes('gifshow.com')) {
+    return await parseKuaishou(url)
+  }
+  // B站解析
+  if (url.includes('bilibili.com') || url.includes('b23.tv')) {
+    return await parseBilibili(url)
+  }
+  // 小红书解析
+  if (url.includes('xiaohongshu.com') || url.includes('xhslink.com') || url.includes('xhs.cn')) {
+    return await parseXiaohongshu(url)
+  }
+  // 微博解析
+  if (url.includes('weibo.com') || url.includes('weibo.cn')) {
+    return await parseWeibo(url)
+  }
+
+  throw new Error('暂不支持该平台')
+}
+
+async function parseDouyin(url) {
+  // 获取重定向后的真实链接
+  const response = await fetch(url, {
+    redirect: 'follow',
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'
+    }
+  })
+
+  const html = await response.text()
+  const finalUrl = response.url
+
+  // 提取视频ID
+  let videoId = ''
+  const idMatch = finalUrl.match(/video\/(\d+)/) || html.match(/video\/(\d+)/)
+  if (idMatch) {
+    videoId = idMatch[1]
+  }
+
+  if (!videoId) {
+    // 尝试从HTML中提取
+    const awemeMatch = html.match(/"awemeId":"(\d+)"/) || html.match(/aweme_id.*?(\d{15,})/)
+    if (awemeMatch) {
+      videoId = awemeMatch[1]
+    }
+  }
+
+  if (!videoId) {
+    throw new Error('无法解析抖音视频ID')
+  }
+
+  // 使用API获取视频信息
+  const apiUrl = `https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids=${videoId}`
+  const apiResponse = await fetch(apiUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'
+    }
+  })
+
+  const data = await apiResponse.json()
+
+  if (data.item_list && data.item_list.length > 0) {
+    const item = data.item_list[0]
+    const videoUrl = item.video.play_addr.url_list[0].replace('playwm', 'play')
+    return {
+      success: true,
+      platform: '抖音',
+      title: item.desc,
+      video_url: videoUrl,
+      cover: item.video.cover.url_list[0],
+      author: item.author.nickname
+    }
+  }
+
+  throw new Error('获取视频信息失败')
+}
+
+async function parseKuaishou(url) {
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'
+    }
+  })
+
+  const html = await response.text()
+
+  const videoMatch = html.match(/"photoUrl":"([^"]+)"/)
+  const titleMatch = html.match(/"caption":"([^"]+)"/)
+  const coverMatch = html.match(/"coverUrl":"([^"]+)"/)
+  const authorMatch = html.match(/"authorName":"([^"]+)"/)
+
+  if (videoMatch) {
+    return {
+      success: true,
+      platform: '快手',
+      title: titleMatch ? decodeURIComponent(titleMatch[1]) : '未知标题',
+      video_url: videoMatch[1].replace(/\\u002F/g, '/'),
+      cover: coverMatch ? coverMatch[1].replace(/\\u002F/g, '/') : '',
+      author: authorMatch ? authorMatch[1] : '未知作者'
+    }
+  }
+
+  throw new Error('无法解析快手视频')
+}
+
+async function parseBilibili(url) {
+  let bvid = ''
+
+  // 处理短链接
+  if (url.includes('b23.tv')) {
+    const response = await fetch(url, { redirect: 'follow' })
+    const finalUrl = response.url
+    const bvMatch = finalUrl.match(/BV[a-zA-Z0-9]+/)
+    if (bvMatch) bvid = bvMatch[0]
+  } else {
+    const bvMatch = url.match(/BV[a-zA-Z0-9]+/)
+    if (bvMatch) bvid = bvMatch[0]
+  }
+
+  if (!bvid) {
+    throw new Error('无法识别B站视频BV号')
+  }
+
+  const apiUrl = `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`
+  const response = await fetch(apiUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Referer': 'https://www.bilibili.com'
+    }
+  })
+
+  const data = await response.json()
+
+  if (data.data) {
+    return {
+      success: true,
+      platform: 'B站',
+      title: data.data.title,
+      video_url: `https://www.bilibili.com/video/${bvid}`,
+      cover: data.data.pic,
+      author: data.data.owner.name
+    }
+  }
+
+  throw new Error('获取B站视频信息失败')
+}
+
+async function parseXiaohongshu(url) {
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'
+    }
+  })
+
+  const html = await response.text()
+
+  const videoMatch = html.match(/"url":"([^"]+\.mp4[^"]*)"/)
+  const titleMatch = html.match(/"desc":"([^"]+)"/)
+  const coverMatch = html.match(/"image":"([^"]+)"/)
+  const authorMatch = html.match(/"nickname":"([^"]+)"/)
+
+  if (videoMatch) {
+    return {
+      success: true,
+      platform: '小红书',
+      title: titleMatch ? titleMatch[1] : '未知标题',
+      video_url: videoMatch[1].replace(/\\u002F/g, '/'),
+      cover: coverMatch ? coverMatch[1].replace(/\\u002F/g, '/') : '',
+      author: authorMatch ? authorMatch[1] : '未知作者'
+    }
+  }
+
+  throw new Error('无法解析小红书视频')
+}
+
+async function parseWeibo(url) {
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'
+    }
+  })
+
+  const html = await response.text()
+
+  const videoMatch = html.match(/"stream_url":"([^"]+)"/)
+  const titleMatch = html.match(/"status_title":"([^"]+)"/)
+  const authorMatch = html.match(/"screen_name":"([^"]+)"/)
+
+  if (videoMatch) {
+    return {
+      success: true,
+      platform: '微博',
+      title: titleMatch ? titleMatch[1] : '未知标题',
+      video_url: videoMatch[1].replace(/\\\//g, '/'),
+      cover: '',
+      author: authorMatch ? authorMatch[1] : '未知作者'
+    }
+  }
+
+  throw new Error('无法解析微博视频')
+}
+
+// HTML内容
+const HTML_CONTENT = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -142,20 +399,6 @@
         </div>
     </div>
     <script>
-        // API配置 - 使用多个备用接口
-        const API_CONFIG = {
-            // 优先使用本地Worker，备用第三方
-            endpoints: [
-                // 自建Worker接口（需要部署worker.js到Cloudflare）
-                // 'https://your-worker.your-subdomain.workers.dev/api/parse?url=',
-
-                // 第三方API接口
-                'https://api.rrocr.com/api/douyin?url=',
-                'https://api.douyin.wtf/api?url=',
-                'https://tk.789.ink/api/douyin?url='
-            ]
-        };
-
         let currentVideoUrl = '';
         const urlInput = document.getElementById('urlInput');
 
@@ -175,10 +418,12 @@
             document.getElementById('result').classList.remove('show');
 
             try {
-                const result = await tryAllApis(url);
-                showResult(result);
+                const response = await fetch('/api/parse?url=' + encodeURIComponent(url));
+                const data = await response.json();
+                if (data.error) throw new Error(data.error);
+                showResult(data);
             } catch (err) {
-                showError(err.message || '解析失败，请检查链接或稍后重试');
+                showError(err.message || '解析失败');
             } finally {
                 document.getElementById('parseBtn').disabled = false;
                 document.getElementById('parseBtn').textContent = '解析';
@@ -186,89 +431,8 @@
             }
         }
 
-        async function tryAllApis(url) {
-            // 根据URL选择API
-            const apis = getApisForUrl(url);
-            let lastError = null;
-
-            for (const api of apis) {
-                try {
-                    const response = await fetch(api + encodeURIComponent(url), {
-                        headers: { 'Accept': 'application/json' }
-                    });
-
-                    if (!response.ok) continue;
-
-                    const data = await response.json();
-
-                    // 检查返回数据
-                    if (data && (data.code === 200 || data.code === 0 || data.success || data.data || data.url || data.video_url)) {
-                        const videoData = data.data || data;
-                        return {
-                            success: true,
-                            platform: videoData.platform || detectPlatform(url),
-                            title: videoData.title || videoData.desc || '未知标题',
-                            video_url: videoData.url || videoData.video_url || videoData.play_url || '',
-                            cover: videoData.cover || videoData.pic || videoData.image || '',
-                            author: videoData.author || videoData.nickname || '未知'
-                        };
-                    }
-                } catch (e) {
-                    lastError = e;
-                    continue;
-                }
-            }
-
-            throw new Error(lastError?.message || '所有API均请求失败');
-        }
-
-        function getApisForUrl(url) {
-            const platform = detectPlatform(url);
-            const apis = [];
-
-            if (platform === '抖音') {
-                apis.push(
-                    'https://api.rrocr.com/api/douyin?url=',
-                    'https://api.douyin.wtf/api?url=',
-                    'https://tk.789.ink/api/douyin?url='
-                );
-            } else if (platform === '快手') {
-                apis.push(
-                    'https://api.rrocr.com/api/kuaishou?url=',
-                    'https://tk.789.ink/api/kuaishou?url='
-                );
-            } else if (platform === 'B站') {
-                apis.push(
-                    'https://api.rrocr.com/api/bilibili?url=',
-                    'https://tk.789.ink/api/bilibili?url='
-                );
-            } else if (platform === '小红书') {
-                apis.push(
-                    'https://api.rrocr.com/api/xhs?url=',
-                    'https://tk.789.ink/api/xhs?url='
-                );
-            } else {
-                apis.push(
-                    'https://api.rrocr.com/api/video?url=',
-                    'https://tk.789.ink/api/video?url='
-                );
-            }
-
-            return apis;
-        }
-
-        function detectPlatform(url) {
-            if (url.includes('douyin.com') || url.includes('iesdouyin.com')) return '抖音';
-            if (url.includes('kuaishou.com') || url.includes('gifshow.com')) return '快手';
-            if (url.includes('bilibili.com') || url.includes('b23.tv')) return 'B站';
-            if (url.includes('xiaohongshu.com') || url.includes('xhslink.com') || url.includes('xhs.cn')) return '小红书';
-            if (url.includes('weibo.com') || url.includes('weibo.cn')) return '微博';
-            return '未知';
-        }
-
         function showResult(data) {
             currentVideoUrl = data.video_url || '';
-
             document.getElementById('title').textContent = data.title || '未知标题';
             document.getElementById('author').textContent = '作者: ' + (data.author || '未知');
             document.getElementById('platform').textContent = '平台: ' + (data.platform || '未知');
@@ -300,19 +464,9 @@
                     const btn = document.querySelector('.btn-copy');
                     btn.textContent = '已复制!';
                     setTimeout(() => btn.textContent = '复制链接', 2000);
-                }).catch(() => {
-                    const input = document.createElement('input');
-                    input.value = currentVideoUrl;
-                    document.body.appendChild(input);
-                    input.select();
-                    document.execCommand('copy');
-                    document.body.removeChild(input);
-                    const btn = document.querySelector('.btn-copy');
-                    btn.textContent = '已复制!';
-                    setTimeout(() => btn.textContent = '复制链接', 2000);
                 });
             }
         }
     </script>
 </body>
-</html>
+</html>`
